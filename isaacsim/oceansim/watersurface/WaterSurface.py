@@ -3,14 +3,10 @@ from pxr import Sdf, UsdLux, Gf, Usd, UsdGeom, UsdPhysics, UsdShade, PhysxSchema
 from usdrt import Vt
 import omni.kit.commands
 import numpy as np
-from isaacsim.core.api.materials.physics_material import PhysicsMaterial
-from isaacsim.core.api.materials.preview_surface import PreviewSurface
-from isaacsim.core.api.materials.visual_material import VisualMaterial
-from isaacsim.core.prims import SingleGeometryPrim, SingleRigidPrim
-from isaacsim.core.utils.prims import get_prim_at_path, is_prim_path_valid
-from isaacsim.core.utils.stage import get_current_stage
-from isaacsim.core.utils.string import find_unique_string_name
-from isaacsim.core.utils.extensions import get_extension_path
+from isaacsim.core.experimental.materials import VisualMaterial
+from isaacsim.core.experimental.prims import GeomPrim
+from isaacsim.core.experimental.utils.prim import get_prim_at_path, is_prim_valid
+from isaacsim.core.experimental.utils.stage import get_current_stage
 from .create_grid import create_grid
 from .ocean_deform_kernels import update_profile, update_points
 import carb
@@ -24,7 +20,17 @@ MIN_WAVE_LENGTH = 0.1
 MAX_WAVE_LENGTH = 250.0
 
 
-class WaterSurface(SingleGeometryPrim):
+def _find_unique_string_name(initial_name: str, is_unique_fn) -> str:
+    """Return `initial_name`, or `initial_name_01`, `_02`, ... until `is_unique_fn` accepts it."""
+    candidate = initial_name
+    suffix = 0
+    while not is_unique_fn(candidate):
+        suffix += 1
+        candidate = f"{initial_name}_{suffix:02d}"
+    return candidate
+
+
+class WaterSurface(GeomPrim):
     """High level wrapper to create/encapsulate a visual water surface
 
     .. note::
@@ -58,7 +64,7 @@ class WaterSurface(SingleGeometryPrim):
 
     .. code-block:: python
 
-        >>> from isaacsim.core.api.objects import VisualCapsule
+        >>> from isaacsim.core.experimental.objects import Capsule as VisualCapsule
         >>> import numpy as np
         >>>
         >>> # create a red visual capsule at the given path
@@ -90,7 +96,7 @@ class WaterSurface(SingleGeometryPrim):
         self._device = str(wp.get_cuda_device())
         self._caustics_enabled = False
         self._cast_shadows = False
-        if is_prim_path_valid(prim_path):
+        if is_prim_valid(prim_path):
             prim = get_prim_at_path(prim_path)
             if not prim.IsA(UsdGeom.Mesh):
                 raise Exception("The prim at path {} cannot be parsed as a water surface object".format(prim_path))
@@ -98,13 +104,14 @@ class WaterSurface(SingleGeometryPrim):
         else:
             self.waterSurfGeom = UsdGeom.Mesh.Define(get_current_stage(), prim_path)
             if visual_material is None:
-                visual_prim_path = find_unique_string_name(
-                    initial_name="/World/Looks/Water", is_unique_fn=lambda x: not is_prim_path_valid(x)
+                visual_prim_path = _find_unique_string_name(
+                    initial_name="/World/Looks/Water", is_unique_fn=lambda x: not is_prim_valid(x)
                 )
                 _ext_id = omni.kit.app.get_app().get_extension_manager().get_extension_id_by_module(__name__)
-                omni.kit.commands.execute("CreateMdlMaterialPrim", 
-                                  mtl_url=get_extension_path(_ext_id) + "/demo/water_material/Water.mdl", 
-                                  mtl_name="Water", 
+                _ext_path = omni.kit.app.get_app().get_extension_manager().get_extension_path(_ext_id)
+                omni.kit.commands.execute("CreateMdlMaterialPrim",
+                                  mtl_url=_ext_path + "/demo/water_material/Water.mdl",
+                                  mtl_name="Water",
                                   mtl_path=visual_prim_path
                 )
                 visual_material = UsdShade.Material.Get(get_current_stage(), Sdf.Path(visual_prim_path))
@@ -120,17 +127,17 @@ class WaterSurface(SingleGeometryPrim):
         self.waterSurfGeom.GetPrim().CreateAttribute("primvars:st", Sdf.ValueTypeNames.TexCoord2fArray, False).Set(uvs)
         self.waterSurfGeom.AddRotateXYZOp().Set((90, 0, 0))
 
-        SingleGeometryPrim.__init__(
+        GeomPrim.__init__(
             self,
-            prim_path=prim_path,
-            name=name,
-            position=position,
-            translation=translation,
-            orientation=orientation,
-            scale=scale,
-            visible=visible,
-            collision=False,
+            prim_path,
+            positions=[position] if position is not None else None,
+            translations=[translation] if translation is not None else None,
+            orientations=[orientation] if orientation is not None else None,
+            scales=[scale] if scale is not None else None,
+            apply_collision_apis=False,
         )
+        if visible is not None:
+            self.set_visibilities([visible])
         if visual_material is not None:
             binding_api = UsdShade.MaterialBindingAPI.Apply(self.waterSurfGeom.GetPrim())
             binding_api.Bind(visual_material)

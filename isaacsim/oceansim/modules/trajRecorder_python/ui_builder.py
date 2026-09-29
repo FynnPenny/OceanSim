@@ -10,18 +10,18 @@ import carb
 import os
 # Isaac sim import
 
-from isaacsim.core.utils.stage import open_stage
+from isaacsim.core.experimental.utils.stage import open_stage
 from isaacsim.gui.components import CollapsableFrame, StateButton, IntField, get_style, combo_floatfield_slider_builder, Button, StringField, setup_ui_headers, str_builder, CheckBox
+# NOTE: LoadButton/ResetButton have no non-deprecated 6.1 replacement yet (confirmed: the only
+# implementation left in the tree is this one, built on top of the deprecated World class).
+# Kept as the sole remaining dependency on the deprecated examples-extension template package.
 from isaacsim.examples.extension.core_connectors import LoadButton, ResetButton
-from isaacsim.core.utils.extensions import get_extension_path
 
-from isaacsim.gui.property.array_widget import CustomMultiIntField
 # Custom import
 from .scenario import Colorpicker_Scenario
 from isaacsim.oceansim.utils.UWrenderer_utils import UW_render
 from isaacsim.oceansim.watersurface import WaterSurface
 from .global_variables import EXTENSION_DESCRIPTION, EXTENSION_TITLE, EXTENSION_LINK
-import isaacsim.core.utils.prims as prims_utils
 
 
 class UIBuilder:
@@ -31,7 +31,7 @@ class UIBuilder:
         self._title = EXTENSION_TITLE
         self._doc_link =  EXTENSION_LINK
         self._overview = EXTENSION_DESCRIPTION
-        self._extension_path = get_extension_path(self._ext_id)
+        self._extension_path = omni.kit.app.get_app().get_extension_manager().get_extension_path(self._ext_id)
 
         # UI frames created
         self.frames = []
@@ -92,7 +92,7 @@ class UIBuilder:
         """
         Called when the stage is closed or the extension is hot reloaded.
         Perform any necessary cleanup such as removing active callback functions
-        Buttons imported from omni.isaac.ui.element_wrappers implement a cleanup function that should be called
+        Buttons imported from isaacsim.gui.components.element_wrappers implement a cleanup function that should be called
         """
         for ui_elem in self.wrapped_ui_elements:
             ui_elem.cleanup()
@@ -214,10 +214,15 @@ class UIBuilder:
         On pressing the Load Button, a new instance of World() is created and then this function is called.
         The user should now load their assets onto the stage and add them to the World Scene.
         """
-        try: 
-            open_stage(self.scene_path_field.get_value_as_string())
+        # Stop the timeline while the old stage is still alive. Otherwise open_stage() stops it
+        # mid-teardown, and the built-in virtual_gantry extension's STOP handler then clears the
+        # debug-draw overlay, which segfaults while the stage/renderer are being torn down.
+        self._timeline.stop()
+        self._timeline.commit()
+        success, _ = open_stage(self.scene_path_field.get_value_as_string())
+        if success:
             print('USD scene is loaded.')
-        except:
+        else:
             print('Path is not valid or scene can not be opened. Default to current stage')
         
         
@@ -255,7 +260,7 @@ class UIBuilder:
         self._scenario_state_btn.reset()
         self._scenario_state_btn.enabled = True
 
-    def _update_scenario(self, step: float):
+    def _update_scenario(self, step: float, context=None):
         """This function is attached to the Run Scenario StateButton.
         This function was passed in as the physics_callback_fn argument.
         This means that when the a_text "RUN" is pressed, a subscription is made to call this function on every physics step.

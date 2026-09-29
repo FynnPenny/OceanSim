@@ -3,21 +3,23 @@ import numpy as np
 import carb
 
 # Isaac sim import
-from isaacsim.core.api.sensors import BaseSensor
-from isaacsim.core.api.physics_context import PhysicsContext
+from isaacsim.core.experimental.prims import XformPrim
+from isaacsim.core.experimental.utils.prim import is_prim_valid
+from isaacsim.core.experimental.utils.stage import define_prim
+from isaacsim.core.simulation_manager import SimulationManager
 
 # Custom import
 from isaacsim.oceansim.utils.MultivariateNormal import MultivariateNormal
 
 
-class BarometerSensor(BaseSensor):
-    def __init__(self, 
-                 prim_path, 
-                 name = "baro", 
-                 position = None, 
-                 translation = None, 
-                 orientation = None, 
-                 scale = None, 
+class BarometerSensor(XformPrim):
+    def __init__(self,
+                 prim_path,
+                 name = "baro",
+                 position = None,
+                 translation = None,
+                 orientation = None,
+                 scale = None,
                  visible = None,
                  water_density: float = 1000.0,     # kg/m^3 (default for water)
                  g: float = 9.81,                   # m/s^2, user-defined gravitational acceleration
@@ -59,7 +61,21 @@ class BarometerSensor(BaseSensor):
             Exception: if translation and position defined at the same time
         """
         
-        super().__init__(prim_path, name, position, translation, orientation, scale, visible)
+        # XformPrim (unlike the deprecated SingleXFormPrim this class used to derive from) requires
+        # the prim to already exist; the barometer has no native USD/PhysX schema of its own, so
+        # create a plain Xform at prim_path if one isn't already there.
+        if not is_prim_valid(prim_path):
+            define_prim(prim_path, "Xform")
+
+        super().__init__(
+            prim_path,
+            positions=[position] if position is not None else None,
+            translations=[translation] if translation is not None else None,
+            orientations=[orientation] if orientation is not None else None,
+            scales=[scale] if scale is not None else None,
+        )
+        if visible is not None:
+            self.set_visibilities([visible])
         self._name = name
         self._prim_path = prim_path
         self._water_density = water_density
@@ -67,17 +83,22 @@ class BarometerSensor(BaseSensor):
         self._mvn_press = MultivariateNormal(1)
         self._mvn_press.init_cov(noise_cov)
         self._water_surface_z = water_surface_z
-        self._atmosphere_pressure = atmosphere_pressure  
+        self._atmosphere_pressure = atmosphere_pressure
 
 
-    
-        physics_context = PhysicsContext()
-        g_dir, scene_g = physics_context.get_gravity()
-        if np.abs(self._g - np.abs(scene_g)) > 0.1:
-            carb.log_warn(f'[{self._name}] Detected USD scene gravity is different from user definition. Reduced to user definition.')
+
+        physics_scenes = SimulationManager.get_physics_scenes()
+        if physics_scenes:
+            scene_g = physics_scenes[0].get_gravity().GetLength()
+            if np.abs(self._g - scene_g) > 0.1:
+                carb.log_warn(f'[{self._name}] Detected USD scene gravity is different from user definition. Reduced to user definition.')
         
 
     
+    def initialize(self, physics_sim_view=None) -> None:
+        """No-op kept for compatibility with callers of the old BaseSensor-derived interface."""
+        return
+
     def get_pressure(self) -> float:
         """Calculate the total pressure at the sensor's current position, including hydrostatic pressure and noise.
 
@@ -92,8 +113,9 @@ class BarometerSensor(BaseSensor):
             When submerged (z-position < water_surface_z), hydrostatic pressure is added based on depth.
         """
 
-        if self.get_world_pose()[0][2] < self._water_surface_z:
-            depth = self._water_surface_z - self.get_world_pose()[0][2]
+        position_z = float(self.get_world_poses()[0].numpy()[0, 2])
+        if position_z < self._water_surface_z:
+            depth = self._water_surface_z - position_z
         else:
             depth = 0.0
         

@@ -1,15 +1,15 @@
-from isaacsim.sensors.camera import Camera
 import omni.replicator.core as rep
 import omni.ui as ui
 import numpy as np
 import matplotlib.pyplot as plt
 from omni.replicator.core.scripts.functional import write_np, write_image
 import warp as wp
+from isaacsim.oceansim.utils.camera_base import OceanSimCameraBase
 from isaacsim.oceansim.utils.ImagingSonar_kernels import *
 
 
 
-class ImagingSonarSensor(Camera):
+class ImagingSonarSensor(OceanSimCameraBase):
     def __init__(self, 
                  prim_path, 
                  name = "FLS", 
@@ -189,6 +189,10 @@ class ImagingSonarSensor(Camera):
             - Sets up Warp arrays for sonar image processing
             - Can optionally write data to disk if output_dir specified
         """
+        # Recreate the render product if close() destroyed it (e.g. Reset re-initializing this sensor);
+        # a no-op on first initialization, since __init__ already created it.
+        super().initialize()
+
         self._viewport = viewport
         self._privileged_bbox = privileged_bbox
         self._device = str(wp.get_preferred_device())
@@ -263,12 +267,15 @@ class ImagingSonarSensor(Camera):
         # This would also reult error when no mesh within the sonar fov
         # Ignore scan that gives empty data stream
         # TODO maybe we don't need this if. Empty data is caused by include_unlabelled=False
-        if len(self.semanticSeg_annot.get_data()['info']['idToLabels']) !=0:
-            self.scan_data['pcl'] = self.pointcloud_annot.get_data(device=self._device)['data']  # shape :(N,3) <class 'warp.types.array'>
-            self.scan_data['normals'] = self.pointcloud_annot.get_data(device=self._device)['info']['pointNormals'] # shape :(N,4) <class 'warp.types.array'>
-            self.scan_data['semantics'] = self.pointcloud_annot.get_data(device=self._device)['info']['pointSemantic'] # shape: (N) <class 'warp.types.array'>
+        # Fetch each annotator once per scan: with do_array_copy=True every get_data() call copies its buffers.
+        idToLabels = self.semanticSeg_annot.get_data()['info']['idToLabels']
+        if len(idToLabels) !=0:
+            pointcloud = self.pointcloud_annot.get_data(device=self._device)
+            self.scan_data['pcl'] = pointcloud['data']  # shape :(N,3) <class 'warp.types.array'>
+            self.scan_data['normals'] = pointcloud['info']['pointNormals'] # shape :(N,4) <class 'warp.types.array'>
+            self.scan_data['semantics'] = pointcloud['info']['pointSemantic'] # shape: (N) <class 'warp.types.array'>
             self.scan_data['viewTransform'] = self.cameraParams_annot.get_data()['cameraViewTransform'].reshape(4,4).T # 4 by 4 np.ndarray extrinsic matrix
-            self.scan_data['idToLabels'] = self.semanticSeg_annot.get_data()['info']['idToLabels'] # dict 
+            self.scan_data['idToLabels'] = idToLabels # dict
             return True
         else:
             return False
@@ -742,14 +749,16 @@ class ImagingSonarSensor(Camera):
         rep.AnnotatorCache.clear(self.cameraParams_annot)
         rep.AnnotatorCache.clear(self.semanticSeg_annot)
 
+        if self._privileged_bbox:
+            self.bbox_annot.detach(self._render_product_path)
+            rep.AnnotatorCache.clear(self.bbox_annot)
+
+        self.close_render_product()
+
         print(f'[{self._name}] Annotator detached. AnnotatorCache cleaned.')
 
         if self._viewport:
             self.ui_destroy()
-
-        if self._privileged_bbox:
-            self.bbox_annot.detach(self._render_product_path)
-            rep.AnnotatorCache.clearn(self.bbox_annot)
 
 
 

@@ -22,6 +22,7 @@ class UW_Camera_ROS(UW_Camera):
         og_node=None,
         depth_og_node=None,
         pointcloud_og_node=None,
+        publish_rate: float = 30.0,
     ):
         super().__init__(
             prim_path=prim_path,
@@ -37,6 +38,10 @@ class UW_Camera_ROS(UW_Camera):
         self._og_node = og_node
         self._depth_og_node = depth_og_node
         self._pointcloud_og_node = pointcloud_og_node
+        # Publishing (and the GPU->CPU copies it needs) is throttled to publish_rate in sim time;
+        # the underwater render and viewport still update every step.
+        self._publish_period = 1.0 / publish_rate
+        self._last_publish_time = None
 
     def initialize(
         self,
@@ -83,7 +88,7 @@ class UW_Camera_ROS(UW_Camera):
             ).set("32FC1")
 
         if self._pointcloud_og_node:
-            from isaacsim.ros2.bridge import read_camera_info
+            from isaacsim.ros2.core import read_camera_info
 
             frame_id = self.prim_path.split("/")[-1]
             camera_info, _ = read_camera_info(
@@ -98,16 +103,26 @@ class UW_Camera_ROS(UW_Camera):
             ).set(f"{self.name}_pointcloud")
 
     def render(self):
-        super().render()
-        self._publish_ros()
-
-    def _publish_ros(self):
-        if self._uw_frame is None:
+        if not super().render():
             return
 
         sim_time = omni.timeline.get_timeline_interface().get_current_time()
+        if self._last_publish_time is not None:
+            elapsed = sim_time - self._last_publish_time
+            # elapsed < 0 means the timeline was reset, so publish straight away
+            if 0.0 <= elapsed < self._publish_period - 1e-6:
+                return
+        self._last_publish_time = sim_time
 
+        # Copy to host only the frames that are actually published
         if self._og_node:
+            self._uw_frame = self.get_uw_image().numpy()
+        if self._depth_og_node or self._pointcloud_og_node:
+            self._degraded_depth_frame = self.get_degraded_depth().numpy()
+        self._publish_ros(sim_time)
+
+    def _publish_ros(self, sim_time: float):
+        if self._og_node and self._uw_frame is not None:
             width = self._res[0] if self._res is not None else self._uw_frame.shape[1]
             height = self._res[1] if self._res is not None else self._uw_frame.shape[0]
             og.Controller.attribute(self._og_node.get_attribute("inputs:width")).set(

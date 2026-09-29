@@ -1,6 +1,6 @@
 import omni.graph.core as og
 import omni.timeline
-from isaacsim.sensors.physics import IMUSensor
+from isaacsim.sensors.experimental.physics import IMU, IMUSensor
 
 
 class ImuSensor_ROS(IMUSensor):
@@ -10,27 +10,25 @@ class ImuSensor_ROS(IMUSensor):
         self,
         prim_path,
         name="Imu",
-        frequency=None,
         translation=None,
         og_node=None,
     ):
+        self._name = name
         self._og_node = og_node
-        super().__init__(
-            prim_path=prim_path,
-            name=name,
-            frequency=frequency,
-            translation=translation,
+        imu = IMU(
+            prim_path,
+            translations=[translation] if translation is not None else None,
         )
+        super().__init__(imu)
 
     def initialize(self, physics_sim_view=None, og_node=None):
         if og_node is not None:
             self._og_node = og_node
-        super().initialize(physics_sim_view)
 
     def read(self):
-        # imu api: https://docs.isaacsim.omniverse.nvidia.com/5.1.0/py/source/extensions/isaacsim.sensors.physics/docs/index.html#isaacsim.sensors.physics.IMUSensor
-        # graph node attributes: https://docs.isaacsim.omniverse.nvidia.com/5.1.0/py/source/extensions/isaacsim.ros2.bridge/docs/ogn/OgnROS2PublishImu.html
-        imu_data = self.get_current_frame()
+        # imu api: https://docs.isaacsim.omniverse.nvidia.com/6.1.0/py/source/extensions/isaacsim.sensors.experimental.physics/docs/index.html#isaacsim.sensors.experimental.physics.IMUSensor
+        # graph node attributes: https://docs.isaacsim.omniverse.nvidia.com/6.1.0/py/source/extensions/isaacsim.ros2.bridge/docs/ogn/OgnROS2PublishImu.html
+        imu_data = self.get_data()
         if self._og_node is None:
             return imu_data
 
@@ -41,10 +39,10 @@ class ImuSensor_ROS(IMUSensor):
             ).set(sim_time)
         og.Controller.attribute(
             self._og_node.get_attribute("inputs:angularVelocity")
-        ).set(imu_data["ang_vel"])
+        ).set(imu_data["angular_velocity"])
         og.Controller.attribute(
             self._og_node.get_attribute("inputs:linearAcceleration")
-        ).set(imu_data["lin_acc"])
+        ).set(imu_data["linear_acceleration"])
         og.Controller.attribute(
             self._og_node.get_attribute("inputs:orientation")
         ).set(imu_data["orientation"])

@@ -6,7 +6,7 @@
 [![Website](https://img.shields.io/website?down_color=red&down_message=offline&up_color=blue&up_message=online&url=https%3A%2F%2Fumfieldrobotics.github.io%2FOceanSim%2F)](https://umfieldrobotics.github.io/OceanSim/)
 [![Subscription Form](https://img.shields.io/badge/Subscribe-Form-blue.svg)](https://docs.google.com/forms/d/e/1FAIpQLSfKWMhE4L6R4jjvEw_bfMtLigXbv5WZeijDah5vk2SpQZW1hA/viewform)
 [![arXiv](https://img.shields.io/badge/arXiv-2503.01074-b31b1b.svg)](https://arxiv.org/abs/2503.01074)
-[![IsaacSim 5.0.0](https://img.shields.io/badge/IsaacSim-5.0.0-brightgreen.svg)](https://docs.isaacsim.omniverse.nvidia.com/latest/index.html)
+[![IsaacSim 6.1.0](https://img.shields.io/badge/IsaacSim-6.1.0-brightgreen.svg)](https://docs.isaacsim.omniverse.nvidia.com/latest/index.html)
 <!-- add and scale media/oceansim_demo.gif to full width-->
 <!-- ![OceanSim Demo](../media/oceansim_demo.gif) \ -->
 <a href="https://umfieldrobotics.github.io/OceanSim/">
@@ -37,6 +37,7 @@ Towards scaling marine perception with synthetic data, we are now bringing Ocean
 
 
 ## Latest Updates
+- `[2026/9]` OceanSim is now compatible with Isaac Sim 6.1.
 - `[2026/8]` We now incorporate a pipeline for our underwater object detection project in our [paper](TODO) and bringing OceanSim 0.2.
 - `[2025/9]` OceanSim is now compatible with Isaac Sim 5.0 GA.
 - `[2025/4]` OceanSim is featured by [NVIDIA Robotics](https://www.linkedin.com/posts/nvidiarobotics_robotics-underwaterrobotics-simulation-activity-7313986055894880257-Dfmq?utm_source=share&utm_medium=member_desktop&rcm=ACoAACB8Y7sB7ikB6wVGPL5NrxYkNwk8RTEJ-3Y)!

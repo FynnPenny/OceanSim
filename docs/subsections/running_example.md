@@ -68,10 +68,10 @@ And corresponding semantic data must be float, eg. `0.2`.
 Semantic configuration can either be performed by code during scene setup:
 <!-- configure Prim Semantics by code -->
 ```bash
-from isaacsim.core.utils.semantics import add_update_semantics
-add_update_semantics(prim=<object_prim>,
-                    type_label='reflectivity',
-                    semantic_label='1.0')
+from isaacsim.core.experimental.utils.semantics import add_labels
+add_labels(<object_prim>,
+           labels=['1.0'],
+           taxonomy='reflectivity')
 ```
 Or with UI provided in `semantics.schema.editor` ([Semantic Schema Editor](https://docs.omniverse.nvidia.com/extensions/latest/ext_replicator/semantics_schema_editor.html) should be auto loaded as Isaac Sim starts up). 
 

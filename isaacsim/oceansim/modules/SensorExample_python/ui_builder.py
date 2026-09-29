@@ -7,18 +7,20 @@ import omni.timeline
 import omni.ui as ui
 
 # Isaac sim import
-from isaacsim.core.prims import SingleGeometryPrim, SingleRigidPrim
-from isaacsim.core.utils.extensions import get_extension_path
-from isaacsim.core.utils.prims import get_prim_at_path
-from isaacsim.core.utils.rotations import euler_angles_to_quat
-from isaacsim.core.utils.semantics import add_update_semantics
-from isaacsim.core.utils.stage import (
+from isaacsim.core.experimental.prims import GeomPrim, RigidPrim
+from isaacsim.core.experimental.utils.prim import get_prim_at_path
+from isaacsim.core.experimental.utils.semantics import add_labels
+from isaacsim.core.experimental.utils.stage import (
     add_reference_to_stage,
     create_new_stage,
     get_current_stage,
     open_stage,
 )
-from isaacsim.core.utils.viewports import set_camera_view
+from isaacsim.core.experimental.utils.transform import euler_angles_to_quaternion
+from isaacsim.core.rendering_manager import ViewportManager
+# NOTE: LoadButton/ResetButton have no non-deprecated 6.1 replacement yet (confirmed: the only
+# implementation left in the tree is this one, built on top of the deprecated World class).
+# Kept as the sole remaining dependency on the deprecated examples-extension template package.
 from isaacsim.examples.extension.core_connectors import LoadButton, ResetButton
 from isaacsim.gui.components import (
     CheckBox,
@@ -54,7 +56,7 @@ class UIBuilder:
         self._title = EXTENSION_TITLE
         self._doc_link = EXTENSION_LINK
         self._overview = EXTENSION_DESCRIPTION
-        self._extension_path = get_extension_path(self._ext_id)
+        self._extension_path = omni.kit.app.get_app().get_extension_manager().get_extension_path(self._ext_id)
 
         self._ctrl_mode = "Manual control"
         self._waypoints_path = self._extension_path + "/demo/demo_waypoints.txt"
@@ -116,7 +118,7 @@ class UIBuilder:
         """
         Called when the stage is closed or the extension is hot reloaded.
         Perform any necessary cleanup such as removing active callback functions
-        Buttons imported from omni.isaac.ui.element_wrappers implement a cleanup function that should be called
+        Buttons imported from isaacsim.gui.components.element_wrappers implement a cleanup function that should be called
         """
         self._DVL_event_sub = None
         self._baro_event_sub = None
@@ -178,6 +180,19 @@ class UIBuilder:
                 )
                 self._use_camera = False
                 self.wrapped_ui_elements.append(camera_check_box)
+
+                full_res_camera_check_box = CheckBox(
+                    "Full Resolution Camera (1920x1080)",
+                    default_value=False,
+                    tooltip=(
+                        "Off (default): render the underwater camera at "
+                        f"{self._cam_resolution_default[0]}x{self._cam_resolution_default[1]} for better "
+                        "performance. On: render at full 1920x1080."
+                    ),
+                    on_click_fn=self._on_full_res_camera_checkbox_click_fn,
+                )
+                self._use_full_res_camera = False
+                self.wrapped_ui_elements.append(full_res_camera_check_box)
 
                 DVL_check_box = CheckBox(
                     "DVL",
@@ -293,6 +308,8 @@ class UIBuilder:
         self._cam = None
         self._cam_trans = np.array([0.3, 0.0, 0.1])
         self._cam_focal_length = 21
+        self._cam_resolution_default = [1280, 720]
+        self._cam_resolution_full = [1920, 1080]
         self._DVL = None
         self._DVL_trans = np.array([0, 0, -0.1])
         self._baro = None
@@ -307,12 +324,28 @@ class UIBuilder:
         On pressing the Load Button, a new instance of World() is created and then this function is called.
         The user should now load their assets onto the stage and add them to the World Scene.
         """
+        # Stop the timeline while the old stage is still alive. Otherwise create_new_stage() stops it
+        # mid-teardown, and the built-in virtual_gantry extension's STOP handler then clears the
+        # debug-draw overlay, which segfaults while the stage/renderer are being torn down.
+        self._timeline.stop()
+        self._timeline.commit()
+        # Close out any sensors (annotators, render products) left over from a previous Load while
+        # their stage prims still exist, before create_new_stage() destroys them.
+        self._scenario.teardown_scenario()
+        # Drop the previous Load's sensor objects. Each sensor below is only (re)assigned when its
+        # checkbox is ticked, so a sensor unticked for this Load would otherwise be handed to the
+        # scenario as a stale object whose prims create_new_stage() deletes.
+        self._imu = None
+        self._sonar = None
+        self._cam = None
+        self._DVL = None
+        self._baro = None
         create_new_stage()
         if self._USD_path_field.get_value_as_string() != "":
             scene_prim_path = "/World/scene"
             add_reference_to_stage(
                 usd_path=self._USD_path_field.get_value_as_string(),
-                prim_path=scene_prim_path,
+                path=scene_prim_path,
             )
             print("User USD scene is loaded.")
         else:
@@ -321,38 +354,38 @@ class UIBuilder:
             # add MHL scene as reference
             MHL_prim_path = "/World/mhl"
             MHL_usd_path = get_oceansim_assets_path() + "/collected_MHL/mhl_scaled.usd"
-            add_reference_to_stage(usd_path=MHL_usd_path, prim_path=MHL_prim_path)
+            add_reference_to_stage(usd_path=MHL_usd_path, path=MHL_prim_path)
             # Toggle MHL mesh's collider
-            SingleGeometryPrim(prim_path=MHL_prim_path, collision=True)
+            GeomPrim(MHL_prim_path, apply_collision_apis=True)
             # apply a reflectivity of 1.0 to mesh of the scene for sonar simulation
-            add_update_semantics(
-                prim=get_prim_at_path(MHL_prim_path + "/Mesh/mesh"),
-                type_label="reflectivity",
-                semantic_label="1.0",
+            add_labels(
+                get_prim_at_path(MHL_prim_path + "/Mesh/mesh"),
+                labels=["1.0"],
+                taxonomy="reflectivity",
             )
             # Load the rock
             rock_prim_path = "/World/rock"
             rock_usd_path = get_oceansim_assets_path() + "/collected_rock/rock.usd"
             rock_prim = add_reference_to_stage(
-                usd_path=rock_usd_path, prim_path=rock_prim_path
+                usd_path=rock_usd_path, path=rock_prim_path
             )
             # apply a reflectivity of 2.0 for sonar simulation
-            add_update_semantics(
-                prim=get_prim_at_path(rock_prim_path + "/Mesh/mesh"),
-                type_label="reflectivity",
-                semantic_label="2.0",
+            add_labels(
+                get_prim_at_path(rock_prim_path + "/Mesh/mesh"),
+                labels=["2.0"],
+                taxonomy="reflectivity",
             )
             # Toggle collider for the rock
-            rock_collider_prim = SingleGeometryPrim(
-                prim_path=rock_prim_path, collision=True
+            rock_collider_prim = GeomPrim(
+                rock_prim_path, apply_collision_apis=True
             )
             # Set collision approximation using convexDecomposition to automatically compute inertia matrix
-            rock_collider_prim.set_collision_approximation("convexDecomposition")
+            rock_collider_prim.set_collision_approximations(["convexDecomposition"])
             # Toggle rigid body for the rock
-            rock_rigid_prim = SingleRigidPrim(
-                prim_path=rock_prim_path,
-                translation=np.array([1.0, 0.1, -1.5]),
-                orientation=euler_angles_to_quat(
+            rock_rigid_prim = RigidPrim(
+                rock_prim_path,
+                translations=[[1.0, 0.1, -1.5]],
+                orientations=euler_angles_to_quaternion(
                     np.array([0.0, 0.0, 90]), degrees=True
                 ),
             )
@@ -361,7 +394,7 @@ class UIBuilder:
         robot_prim_path = "/World/rob"
         robot_usd_path = get_oceansim_assets_path() + "/Bluerov/BROV_low.usd"
         self._rob = add_reference_to_stage(
-            usd_path=robot_usd_path, prim_path=robot_prim_path
+            usd_path=robot_usd_path, path=robot_prim_path
         )
         # Toggle rigid body and collider preset for robot, and set zero gravity to mimic underwater environment
         rob_rigidBody_API = PhysxSchema.PhysxRigidBodyAPI.Apply(
@@ -372,18 +405,20 @@ class UIBuilder:
         rob_rigidBody_API.GetLinearDampingAttr().Set(self._rob_linear_damping)
         rob_rigidBody_API.GetAngularDampingAttr().Set(self._rob_angular_damping)
         # Set the mass for the robot to suppress a warning from inertia autocomputation
-        rob_collider_prim = SingleGeometryPrim(
-            prim_path=robot_prim_path, collision=True
+        rob_collider_prim = GeomPrim(
+            robot_prim_path, apply_collision_apis=True
         )
-        rob_collider_prim.set_collision_approximation("boundingCube")
-        SingleRigidPrim(
-            prim_path=robot_prim_path,
-            mass=self._rob_mass,
-            translation=np.array([-2.0, 0.0, -0.8]),
+        rob_collider_prim.set_collision_approximations(["boundingCube"])
+        RigidPrim(
+            robot_prim_path,
+            masses=[self._rob_mass],
+            translations=[[-2.0, 0.0, -0.8]],
         )
 
-        set_camera_view(
-            eye=np.array([5, 0.6, 0.4]), target=rob_collider_prim.get_world_pose()[0]
+        ViewportManager.set_camera_view(
+            camera="/OmniverseKit_Persp",
+            eye=np.array([5, 0.6, 0.4]),
+            target=rob_collider_prim.get_world_poses()[0].numpy()[0],
         )
 
         if self._use_imu:
@@ -393,17 +428,13 @@ class UIBuilder:
                 self._imu = ImuSensor_ROS(
                     prim_path=robot_prim_path + "/imu",
                     name="Imu",
-                    frequency=60,
                     translation=np.array([0, 0, 0]),
                 )
             else:
-                from isaacsim.sensors.physics import IMUSensor
+                from isaacsim.sensors.experimental.physics import IMU, IMUSensor
 
                 self._imu = IMUSensor(
-                    prim_path=robot_prim_path + "/imu",
-                    name="Imu",
-                    frequency=60,
-                    translation=np.array([0, 0, 0]),
+                    IMU(robot_prim_path + "/imu", translations=[[0, 0, 0]])
                 )
 
         if self._use_sonar:
@@ -423,12 +454,12 @@ class UIBuilder:
             self._sonar = sonar_cls(
                 prim_path=robot_prim_path + "/sonar",
                 translation=self._sonar_trans,
-                orientation=euler_angles_to_quat(
+                orientation=euler_angles_to_quaternion(
                     np.array([0.0, 45, 0.0]), degrees=True
-                ),
+                ).numpy(),
                 range_res=0.005,
                 angular_res=0.25,
-                hori_res=4000,
+                hori_res=2000,
             )
 
         if self._use_camera:
@@ -442,9 +473,14 @@ class UIBuilder:
 
                 cam_cls = UW_Camera
 
+            cam_resolution = (
+                self._cam_resolution_full
+                if self._use_full_res_camera
+                else self._cam_resolution_default
+            )
             self._cam = cam_cls(
                 prim_path=robot_prim_path + "/UW_camera",
-                resolution=[1920, 1080],
+                resolution=cam_resolution,
                 translation=self._cam_trans,
             )
             self._cam.set_focal_length(0.1 * self._cam_focal_length)
@@ -526,7 +562,7 @@ class UIBuilder:
         self._scenario_state_btn.reset()
         self._scenario_state_btn.enabled = True
 
-    def _update_scenario(self, step: float):
+    def _update_scenario(self, step: float, context=None):
         """This function is attached to the Run Scenario StateButton.
         This function was passed in as the physics_callback_fn argument.
         This means that when the a_text "RUN" is pressed, a subscription is made to call this function on every physics step.
@@ -590,6 +626,10 @@ class UIBuilder:
 
     def _on_camera_checkbox_click_fn(self, model):
         self._use_camera = model
+        print("Reload the scene for changes to take effect.")
+
+    def _on_full_res_camera_checkbox_click_fn(self, model):
+        self._use_full_res_camera = model
         print("Reload the scene for changes to take effect.")
 
     def _on_DVL_checkbox_click_fn(self, model):

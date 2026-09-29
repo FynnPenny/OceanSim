@@ -4,11 +4,24 @@ import omni.graph.core as og
 import omni.replicator.core as rep
 import omni.syntheticdata._syntheticdata as sd
 from isaacsim.core.nodes.scripts.utils import set_target_prims
-from isaacsim.core.utils.extensions import enable_extension
-from isaacsim.core.utils.prims import is_prim_path_valid
-from isaacsim.sensors.camera import Camera
+from isaacsim.core.experimental.utils.app import enable_extension
+from isaacsim.core.experimental.utils.prim import is_prim_valid
+from isaacsim.oceansim.utils.camera_base import OceanSimCameraBase as Camera
 
 enable_extension("isaacsim.ros2.bridge")
+enable_extension("isaacsim.ros2.core")
+
+# publish_camera_tf() below attaches ROS2PublishTransformTree/RawTransformTree nodes to plain
+# Xform/Camera prims (the camera/sonar mounts), which are not PhysX rigid bodies. Kit's PoseTree
+# (isaacsim.core.includes/PoseTree.hpp) unconditionally logs "[PoseTree] target getObjectType
+# eInvalid for '<path>'" once per target per TF tick whenever a target isn't a rigid body or
+# articulation link, purely as an informational branch marker -- it still falls through to a
+# correct plain-Xform pose lookup and publishes the transform normally. There is no per-node way
+# to silence just this message, so raise this log channel's threshold above WARN instead; actual
+# errors on the channel (level ERROR and above) still come through.
+carb.logging.acquire_logging().set_level_threshold_for_source(
+    "isaacsim.ros2.nodes", carb.logging.LogSettingBehavior.OVERRIDE, carb.logging.LEVEL_ERROR
+)
 
 
 def to_ros_stamp(sim_time: float) -> tuple[int, int]:
@@ -25,11 +38,14 @@ def to_ros_stamp(sim_time: float) -> tuple[int, int]:
 
 
 ###### Camera helper functions for setting up publishers. ########
+# The publish_* helpers return the Replicator writer they attach. Callers must call writer.detach()
+# before the camera's render product is destroyed; otherwise the writer's graph nodes keep pointing
+# at the dead render product and log "invalid renderProduct input" every frame.
 
 
 # Source: https://docs.isaacsim.omniverse.nvidia.com/5.1.0/ros2_tutorials/tutorial_ros2_camera_publishing.html
 def publish_camera_info(camera: Camera, freq):
-    from isaacsim.ros2.bridge import read_camera_info
+    from isaacsim.ros2.core import read_camera_info
 
     # The following code will link the camera's render product and publish the data to the specified topic name.
     render_product = camera._render_product_path
@@ -64,7 +80,7 @@ def publish_camera_info(camera: Camera, freq):
 
     # Set step input of the Isaac Simulation Gate nodes upstream of ROS publishers to control their execution rate
     og.Controller.attribute(gate_path + ".inputs:step").set(step_size)
-    return
+    return writer
 
 
 def publish_pointcloud_from_depth(camera: Camera, freq):
@@ -99,7 +115,7 @@ def publish_pointcloud_from_depth(camera: Camera, freq):
     )
     og.Controller.attribute(gate_path + ".inputs:step").set(step_size)
 
-    return
+    return writer
 
 
 def publish_depth(camera: Camera, freq):
@@ -131,7 +147,7 @@ def publish_depth(camera: Camera, freq):
     )
     og.Controller.attribute(gate_path + ".inputs:step").set(step_size)
 
-    return
+    return writer
 
 
 # Not currently using this for the UW camera, see the omnigraph node in UW_Camera_ROS instead
@@ -163,13 +179,13 @@ def publish_rgb(camera: Camera, freq):
         rv + "IsaacSimulationGate", render_product
     )
     og.Controller.attribute(gate_path + ".inputs:step").set(step_size)
-    return
+    return writer
 
 
 def publish_camera_tf(camera: Camera):
     camera_prim = camera.prim_path
 
-    if not is_prim_path_valid(camera_prim):
+    if not is_prim_valid(camera_prim):
         raise ValueError(f"Camera path '{camera_prim}' is invalid.")
 
     try:
@@ -182,7 +198,7 @@ def publish_camera_tf(camera: Camera):
         ros_camera_graph_path = "/CameraTFActionGraph"
 
         # If a camera graph is not found, create a new one.
-        if not is_prim_path_valid(ros_camera_graph_path):
+        if not is_prim_valid(ros_camera_graph_path):
             (ros_camera_graph, _, _, _) = og.Controller.edit(
                 {
                     "graph_path": ros_camera_graph_path,
@@ -204,6 +220,11 @@ def publish_camera_tf(camera: Camera):
                     ],
                 },
             )
+
+        # Reset re-runs this on the same stage, where this camera's TF nodes (and their target prim)
+        # already exist and keep publishing; creating them again would fail with "already exists".
+        if is_prim_valid(ros_camera_graph_path + "/PublishTF_" + camera_frame_id):
+            return
 
         # Generate 2 nodes associated with each camera: TF from world to ROS camera convention, and world frame.
         og.Controller.edit(

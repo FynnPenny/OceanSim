@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.0] - 2026-09-17
+
+### Changed
+
+- Migrated to Isaac Sim 6.1: replaced deprecated `isaacsim.core.api`/`isaacsim.core.prims`/`isaacsim.core.utils`
+  wrappers with `isaacsim.core.experimental.*`, deprecated `isaacsim.sensors.camera`/`.physics`/`.physx` with
+  `isaacsim.sensors.experimental.*`, and rebuilt the DVL sensor on the new `Raycast`/`RaycastSensor` API.
+- `LoadButton`/`ResetButton` remain the sole dependency on the deprecated `isaacsim.examples.extension`
+  package; no non-deprecated replacement exists yet in 6.1.
+
 ## [0.2.0] - 2026-08-()
 
 ### Added

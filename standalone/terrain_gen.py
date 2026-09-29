@@ -47,9 +47,9 @@ config = {
 }
 simulation_app = SimulationApp(config)
 # load up OceanSim
-import isaacsim.core.utils.extensions as extensions_utils
+import isaacsim.core.experimental.utils.app as extensions_utils
 
-value = extensions_utils.enable_extension(extension_name='isaacsim.oceansim')
+value = extensions_utils.enable_extension(name='isaacsim.oceansim')
 if value:
     print("[Terrain Gen] OceanSim loaded successfully")
 else:

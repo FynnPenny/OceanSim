@@ -25,7 +25,7 @@ class CmdVelController:
         """Create OmniGraph for cmd_vel subscription using Isaac Sim ROS2 bridge"""
         try:
             # Enable ROS2 bridge extension
-            from isaacsim.core.utils.extensions import enable_extension
+            from isaacsim.core.experimental.utils.app import enable_extension
             enable_extension("isaacsim.ros2.bridge")
 
             keys = og.Controller.Keys

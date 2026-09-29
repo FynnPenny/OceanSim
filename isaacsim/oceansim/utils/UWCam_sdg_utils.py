@@ -179,12 +179,23 @@ import omni.replicator.core as rep
 import omni.timeline
 import omni.usd
 import carb.settings
-from isaacsim.core.utils.semantics import  remove_labels, add_labels, upgrade_prim_semantics_to_labels
-from isaacsim.core.utils.stage import add_reference_to_stage
+from isaacsim.core.experimental.utils.semantics import  remove_labels, add_labels, upgrade_prim_semantics_to_labels
+from isaacsim.core.experimental.utils.stage import add_reference_to_stage
+from isaacsim.core.experimental.utils.transform import compute_relative_transform
+from isaacsim.core.rendering_manager import ViewportManager
 from isaacsim.storage.native import get_assets_root_path
 from pxr import Gf, PhysxSchema, Sdf, Usd, UsdGeom, UsdPhysics, UsdShade, UsdLux
-from isaacsim.core.utils.viewports import set_camera_view
-from isaacsim.core.utils.transformations import get_relative_transform
+
+
+def get_relative_transform(source_prim: Usd.Prim, target_prim: Usd.Prim):
+    """Get the relative transformation matrix from the source prim to the target prim.
+
+    Returns:
+        Column-major transformation matrix with shape (4, 4).
+    """
+    source_to_world = UsdGeom.Xformable(source_prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+    target_to_world = UsdGeom.Xformable(target_prim).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+    return compute_relative_transform(source_to_world, target_to_world)
 
 def find_usd_files_recursively(root_folder):
     """
@@ -251,7 +262,7 @@ def add_objects(
             for _ in range(count):
                 prim_path = omni.usd.get_stage_next_free_path(stage, f"/{root_path}/{name_prefix}{category}", False)
 
-                prim = add_reference_to_stage(usd_path=usd_file, prim_path=prim_path)
+                prim = add_reference_to_stage(usd_path=usd_file, path=prim_path)
                 set_transform_attributes(prim, 
                                         location=(0.0, 0.0, 0.0), 
                                         orientation=Gf.Quatf(1), 
@@ -264,7 +275,7 @@ def add_objects(
 
                 remove_labels(prim)  # Remove all
                 upgrade_prim_semantics_to_labels(prim)
-                add_labels(prim, [category.lower()])
+                add_labels(prim, labels=[category.lower()])
 
                 assets.append(prim)
     
@@ -312,7 +323,7 @@ def add_distractor_from_isaac(
         for _ in range(count):
             prim_path = omni.usd.get_stage_next_free_path(stage, f"/{root_path}/{name_prefix}", False)
 
-            prim = add_reference_to_stage(usd_path=url, prim_path=prim_path)
+            prim = add_reference_to_stage(usd_path=url, path=prim_path)
             set_transform_attributes(prim, 
                                      location=(0.0, 0.0, 0.0), 
                                      orientation=Gf.Quatf(1), 
@@ -326,7 +337,7 @@ def add_distractor_from_isaac(
 
             remove_labels(prim)  # Remove all
             upgrade_prim_semantics_to_labels(prim)
-            add_labels(prim, ['distractor'])
+            add_labels(prim, labels=['distractor'])
 
             assets.append(prim)
     
@@ -370,7 +381,7 @@ def add_distractor_from_UE(
         for _ in range(count):
             prim_path = omni.usd.get_stage_next_free_path(stage, f"/{root_path}/{name_prefix}", False)
 
-            prim = add_reference_to_stage(usd_path=url, prim_path=prim_path)
+            prim = add_reference_to_stage(usd_path=url, path=prim_path)
 
             set_transform_attributes(prim, 
                                      location=(0.0, 0.0, 0.0), 
@@ -384,7 +395,7 @@ def add_distractor_from_UE(
 
             remove_labels(prim)  # Remove all
             upgrade_prim_semantics_to_labels(prim)
-            add_labels(prim, ['distractor'])
+            add_labels(prim, labels=['distractor'])
 
             assets.append(prim)
     
@@ -434,7 +445,7 @@ def assign_scene_semantics_based_on_ref(override_semantic_mapping: dict[str, int
                 # This upgrade the old semantic schema to the new one
                 upgrade_prim_semantics_to_labels(prim)
                 # This adds the semantics using the newest schema
-                add_labels(prim, [object_type])
+                add_labels(prim, labels=[object_type])
                 # This adds the semantics to the semantic mapping
                 if object_type not in semantic_mapping:
                     semantic_mapping[object_type] = i
@@ -794,7 +805,7 @@ def randomize_camera_poses_rel_to_objs(
             random.uniform(cam_ws[1], cam_ws[4]),
             random.uniform(cam_ws[2], cam_ws[5]),
         )
-        set_camera_view(eye=camera_loc, target=target_loc, camera_prim_path=cam.GetPath().pathString)
+        ViewportManager.set_camera_view(eye=camera_loc, target=target_loc, camera=cam.GetPath().pathString)
 
 
 def mask_random_objects(objects: list[Usd.Prim], ratio: float = 0.5) -> list[Usd.Prim]:
@@ -836,7 +847,7 @@ def add_material(material_folder_path: str) -> list[UsdShade.Material]:
                 material_name = file.split("_")[0]
                 print(f"Adding material: {material_name}")
                 full_path = os.path.join(root, file)
-                material_prim = add_reference_to_stage(prim_path=f'/SDG_materials/{material_name}', usd_path=full_path, prim_type="Material")
+                material_prim = add_reference_to_stage(path=f'/SDG_materials/{material_name}', usd_path=full_path, prim_type="Material")
                 materials.append(UsdShade.Material(material_prim))
     
     
