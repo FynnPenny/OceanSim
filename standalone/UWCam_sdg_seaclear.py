@@ -140,9 +140,9 @@ from isaacsim.simulation_app import SimulationApp
 simulation_app = SimulationApp(launch_config=launch_config)
 
 # load up OceanSim
-import isaacsim.core.utils.extensions as extensions_utils
+import isaacsim.core.experimental.utils.app as extensions_utils
 
-value = extensions_utils.enable_extension(extension_name='isaacsim.oceansim')
+value = extensions_utils.enable_extension(name='isaacsim.oceansim')
 if value:
     print("[SDG] OceanSim loaded successfully")
 else:
@@ -152,17 +152,17 @@ else:
 
 # Load an environment extension that some usd scenes will rely on
 
-extensions_utils.enable_extension(extension_name="omni.kit.actions.core")
-extensions_utils.enable_extension(extension_name="omni.kit.window.preferences")
-extensions_utils.enable_extension(extension_name="omni.kit.widget.sliderbar")
-extensions_utils.enable_extension(extension_name="omni.kit.viewport.utility")
-extensions_utils.enable_extension(extension_name="omni.kit.usd.layers")
-extensions_utils.enable_extension(extension_name="omni.rtx.window.settings")
-extensions_utils.enable_extension(extension_name="omni.kit.notification_manager")
-extensions_utils.enable_extension(extension_name="omni.kit.window.filepicker")
-extensions_utils.enable_extension(extension_name="omni.kit.environment.core")
-extensions_utils.enable_extension(extension_name="omni.kit.property.environment")
-extensions_utils.enable_extension(extension_name="omni.kit.window.environment")
+extensions_utils.enable_extension(name="omni.kit.actions.core")
+extensions_utils.enable_extension(name="omni.kit.window.preferences")
+extensions_utils.enable_extension(name="omni.kit.widget.sliderbar")
+extensions_utils.enable_extension(name="omni.kit.viewport.utility")
+extensions_utils.enable_extension(name="omni.kit.usd.layers")
+extensions_utils.enable_extension(name="omni.rtx.window.settings")
+extensions_utils.enable_extension(name="omni.kit.notification_manager")
+extensions_utils.enable_extension(name="omni.kit.window.filepicker")
+extensions_utils.enable_extension(name="omni.kit.environment.core")
+extensions_utils.enable_extension(name="omni.kit.property.environment")
+extensions_utils.enable_extension(name="omni.kit.window.environment")
 
 
 import omni.replicator.core as rep

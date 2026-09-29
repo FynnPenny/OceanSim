@@ -15,7 +15,7 @@ from isaacsim.replicator.writers.scripts.utils import calculate_truncation_ratio
 # Import sonar rendering kernel
 from isaacsim.oceansim.utils.ImagingSonar_kernels import *
 from pxr import Gf
-import isaacsim.core.utils.rotations as rotations_utils
+import isaacsim.core.experimental.utils.transform as rotations_utils
 
 from PIL import Image, ImageDraw
 from functools import partial
@@ -484,7 +484,7 @@ class FLS_KittiWriter(Writer):
             quat_camera_frame_gf.GetImaginary()
         )
         # yaw is the angle between the object local forward X direction and the camera rightward X direction [-pi, pi]
-        row, pitch, yaw = rotations_utils.quat_to_euler_angles(np.array(obj["quat_wxyz_camera_frame"]), extrinsic=False)
+        row, pitch, yaw = rotations_utils.quaternion_to_euler_angles(np.array(obj["quat_wxyz_camera_frame"]), extrinsic=False).numpy()
         # which is rotation_y in Kitti format (NOTE: this is the rotation with respect to the camera frame, Y up)
         rotation_y = yaw
         # α measures the object’s orientation relative to camera’s observation angle towards the center of the object

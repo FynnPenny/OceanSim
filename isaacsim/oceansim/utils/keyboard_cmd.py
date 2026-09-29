@@ -49,6 +49,10 @@ class keyboard_cmd:
 
 
     def cleanup(self):
+        # The subscription is a plain id, so dropping it does not unsubscribe; without this, every
+        # Load/Reset leaves another keyboard handler running.
+        if self._input is not None and self._sub_keyboard is not None:
+            self._input.unsubscribe_to_keyboard_events(self._keyboard, self._sub_keyboard)
         self._appwindow = None
         self._input = None
         self._keyboard = None

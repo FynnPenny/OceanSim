@@ -1,15 +1,19 @@
 # Omniverse import
+import traceback
+
+import carb
 import numpy as np
 from pxr import Gf
 
 # Isaac sim import
-from isaacsim.core.prims import RigidPrim, SingleRigidPrim
-from isaacsim.core.utils.prims import get_prim_path
+from isaacsim.core.experimental.prims import RigidPrim
+from isaacsim.core.experimental.utils.prim import get_prim_path
 
 
 class MHL_Sensor_Example_Scenario():
     def __init__(self):
         self._rob = None
+        self._rob_view = None
         self._imu = None
         self._sonar = None
         self._cam = None
@@ -20,6 +24,8 @@ class MHL_Sensor_Example_Scenario():
         self._cmd_vel_controller = None
         self._use_ros = True
         self.omni_ros = None
+        # Replicator writers attached by the ros2_helpers publish_* functions
+        self._ros_writers = []
 
         self._running_scenario = False
         self._time = 0.0
@@ -54,9 +60,17 @@ class MHL_Sensor_Example_Scenario():
                 self._sonar.sonar_initialize(
                     include_unlabelled=True, og_node=self.omni_ros._sonar_node
                 )
-                ros2_helpers.publish_camera_info(self._sonar, approx_freq)
-                ros2_helpers.publish_depth(self._sonar, approx_freq)
-                ros2_helpers.publish_pointcloud_from_depth(self._sonar, approx_freq)
+                # TODO: The camera_info/depth/pointcloud topics below come from the sonar's virtual
+                # pinhole camera (2000x307, 130x20 deg FOV), so they are ground-truth geometry with
+                # none of the sonar physics that make_sonar_data() applies: no reflectivity, no
+                # range/azimuth binning, no speckle noise, no attenuation, and full elevation
+                # resolution a real FLS lacks. Add sonar-physics versions of these outputs (or relabel
+                # them as ground truth). The physical sonar output is the <name>/sonar_image topic.
+                self._ros_writers += [
+                    ros2_helpers.publish_camera_info(self._sonar, approx_freq),
+                    ros2_helpers.publish_depth(self._sonar, approx_freq),
+                    ros2_helpers.publish_pointcloud_from_depth(self._sonar, approx_freq),
+                ]
                 ros2_helpers.publish_camera_tf(self._sonar)
 
             if self._cam is not None:
@@ -66,8 +80,7 @@ class MHL_Sensor_Example_Scenario():
                     pointcloud_og_node=self.omni_ros._pointcloud_node,
                 )
                 approx_freq = 30
-                ros2_helpers.publish_camera_info(self._cam, approx_freq)
-                ros2_helpers.publish_rgb(self._cam, approx_freq)
+                self._ros_writers.append(ros2_helpers.publish_camera_info(self._cam, approx_freq))
                 ros2_helpers.publish_camera_tf(self._cam)
 
             if self._DVL is not None:
@@ -101,12 +114,14 @@ class MHL_Sensor_Example_Scenario():
             robot_path = get_prim_path(self._rob)
             self._cmd_vel_controller = CmdVelController(robot_prim_path=robot_path)
 
+        # Create the RigidPrim tensor view once; building one per physics step is expensive
+        if ctrl_mode in ("Manual control", "Straight line"):
+            self._rob_view = RigidPrim(get_prim_path(self._rob))
+
         # Apply forces via RigidPrim tensor view if manual control
         if ctrl_mode == "Manual control":
             from ...utils.keyboard_cmd import keyboard_cmd
 
-            self._rob_view = RigidPrim(prim_paths_expr=get_prim_path(self._rob))
-            self._rob_view.initialize()
             self._force_cmd = keyboard_cmd(base_command=np.array([0.0, 0.0, 0.0]),
                                       input_keyboard_mapping={
                                         # forward command
@@ -168,35 +183,50 @@ class MHL_Sensor_Example_Scenario():
             print('Fail to load this waypoints. Back to default waypoints.')
 
         
+    @staticmethod
+    def _run_teardown_step(description, fn):
+        """Run one cleanup step, logging (not raising) on failure so the remaining steps still run."""
+        try:
+            fn()
+        except Exception:
+            carb.log_error(f"[SensorExample] Teardown step '{description}' failed:\n{traceback.format_exc()}")
+
     def teardown_scenario(self):
-
-        # Because these two sensors create annotator cache in GPU,
-        # close() will detach annotator from render product and clear the cache.
-        if self._imu is not None: # TODO do better than derefing
-            self._imu = None
-        if self._sonar is not None:
-            self._sonar.close()
-        if self._cam is not None:
-            self._cam.close()
-
-        # Clear cmd_vel controller
-        if self._cmd_vel_controller is not None:
-            self._cmd_vel_controller.cleanup()
-            self._cmd_vel_controller = None
-
-        # clear the keyboard subscription
-        if self._ctrl_mode=="Manual control":
-            self._force_cmd.cleanup()
-            self._torque_cmd.cleanup()
-
-        self._rob = None
-        self._sonar = None
-        self._cam = None
-        self._DVL = None
-        self._baro = None
-        self.omni_ros = None
+        # Stop update_scenario() from touching sensors while they are being closed.
         self._running_scenario = False
-        self._time = 0.0
+        try:
+            # Detach the ROS writers first: close() destroys the render products they are attached to.
+            for writer in self._ros_writers:
+                self._run_teardown_step(f"detach ROS writer {type(writer).__name__}", writer.detach)
+
+            # Because these two sensors create annotator cache in GPU,
+            # close() will detach annotator from render product and clear the cache.
+            # TODO: the IMU is only dereferenced, not closed.
+            if self._sonar is not None:
+                self._run_teardown_step("close sonar", self._sonar.close)
+            if self._cam is not None:
+                self._run_teardown_step("close camera", self._cam.close)
+
+            # Clear cmd_vel controller
+            if self._cmd_vel_controller is not None:
+                self._run_teardown_step("clean up cmd_vel controller", self._cmd_vel_controller.cleanup)
+
+            # clear the keyboard subscription
+            if self._ctrl_mode=="Manual control":
+                self._run_teardown_step("clean up keyboard force command", lambda: self._force_cmd.cleanup())
+                self._run_teardown_step("clean up keyboard torque command", lambda: self._torque_cmd.cleanup())
+        finally:
+            self._ros_writers = []
+            self._cmd_vel_controller = None
+            self._imu = None
+            self._rob = None
+            self._rob_view = None
+            self._sonar = None
+            self._cam = None
+            self._DVL = None
+            self._baro = None
+            self.omni_ros = None
+            self._time = 0.0
 
 
     def update_scenario(self, step: float):
@@ -210,7 +240,7 @@ class MHL_Sensor_Example_Scenario():
             if self._use_ros:
                 self._imu.read()
             else:
-                self._imu.get_current_frame()
+                self._imu.get_data()
         if self._sonar is not None:
             self._sonar.make_sonar_data()
         if self._cam is not None:
@@ -231,10 +261,18 @@ class MHL_Sensor_Example_Scenario():
             self._cmd_vel_controller.update(self._rob)
 
         if self._ctrl_mode=="Manual control":
+            # TODO: Investigate unexplained drift. In Manual control the ROV sometimes drifts slowly
+            # along its x axis as if in a current, seen against a fixed point in the camera view;
+            # observed after rolling the ROV. Seen both backwards and (another run) forwards. In the
+            # forwards case, holding S stopped it completely and holding W moved faster, i.e. a
+            # constant offset of exactly one key's force (+10 in x). That strongly suggests a stuck
+            # keyboard command: commands are press/release counted, so one unmatched press or
+            # release leaves a constant force. Less likely: the bounding-cube collider overlapping
+            # the tank/rock, or the local-frame force applied away from the centre of mass.
             force = np.asarray(self._force_cmd._base_command, dtype=np.float32).reshape(1, 3)
             torque = np.asarray(self._torque_cmd._base_command, dtype=np.float32).reshape(1, 3)
             self._rob_view.apply_forces_and_torques_at_pos(
-                forces=force, torques=torque, is_global=False
+                forces=force, torques=torque, local_frame=True
             )
         elif self._ctrl_mode=="Waypoints":
             if len(self.waypoints) > 0:
@@ -245,4 +283,4 @@ class MHL_Sensor_Example_Scenario():
             else:
                 print('Waypoints finished')                
         elif self._ctrl_mode=="Straight line":
-            SingleRigidPrim(prim_path=get_prim_path(self._rob)).set_linear_velocity(np.array([0.5,0,0])) 
+            self._rob_view.set_velocities(linear_velocities=[[0.5, 0.0, 0.0]])

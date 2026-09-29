@@ -3,7 +3,7 @@ reloadable = true
 order = 0
 
 [package]
-version = "1.0.0"
+version = "1.1.0"
 category = "Simulation"
 title = "OceanSim"
 description = "Underwater simulation utilities"
@@ -22,7 +22,21 @@ exclude = ["Ogn*Database.py"]
 [dependencies]
 "omni.kit.uiapp" = {}
 "isaacsim.gui.components" = {}
+# NOTE: kept only for LoadButton/ResetButton, which have no non-deprecated 6.1 replacement yet.
 "isaacsim.examples.extension" = {}
+"isaacsim.core.experimental.objects" = {}
+"isaacsim.core.experimental.prims" = {}
+"isaacsim.core.experimental.materials" = {}
+"isaacsim.core.experimental.utils" = {}
+"isaacsim.core.simulation_manager" = {}
+"isaacsim.core.rendering_manager" = {}
+"isaacsim.sensors.experimental.physics" = {}
+"isaacsim.util.debug_draw" = {}
+"omni.replicator.core" = {}
+# NOTE: omni.physx.gpu isn't pulled in transitively by omni.replicator.core, so without this
+# explicit dependency, omni.replicator.core's native plugin can load before omni.physx.gpu's,
+# causing "undefined symbol: PxSetPhysXGpuProfilerCallback" depending on host app/launch order.
+"omni.physx.gpu" = {}
 
 
 [[python.module]]

@@ -21,6 +21,10 @@ class SDGplayground_Scenario():
 
     def teardown_scenario(self):
         self._running_scenario = False
+        # Detach annotators/render product before dropping the reference, so no GPU-resident
+        # state is left orphaned when the stage is torn down for the next Load.
+        if self._cam is not None:
+            self._cam.close()
         self._cam = None
         self._time = 0.0
         self._id = 0
